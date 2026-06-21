@@ -181,7 +181,3 @@ h1 .accent { color: var(--p1); }
 }
 .help summary { cursor: pointer; color: #eef1f5; }
 .help ul { margin: 10px 0 0; padding-left: 20px; line-height: 1.5; }
-
-@media (max-width: 560px) {
-  :root { --cell: 32px; --gap: 9px; }
-}
