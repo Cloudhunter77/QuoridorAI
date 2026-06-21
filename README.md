@@ -47,6 +47,11 @@ URL, or run `python3 -m http.server 8000` on a computer and browse to
 | Easy   | 1            | Often plays random moves; uses walls lightly. Clearly beatable. |
 | Medium | 2            | Solid play, occasional slip.                |
 | Hard   | 3            | Plays the search out, no randomness.        |
+| Expert | iterative deepening (~depth 4–6, 2s budget) | Strongest setting. Searches as deep as it can in the time budget and never blunders. |
+
+> **Note:** Quoridor is not a solved game, so "Expert" is the strongest
+> *practical* AI rather than provably perfect play. In testing it beats Hard
+> roughly 70% of the time as both first and second player.
 
 ## How the AI works
 
