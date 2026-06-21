@@ -28,6 +28,9 @@ python3 -m http.server 8000
 - When the two pawns are face to face you may **jump** over the opponent
   (straight ahead, or diagonally if a wall is behind them).
 
+You can pick the difficulty and whether **you or the AI moves first** before
+starting a new game (you're always the blue pawn at the bottom either way).
+
 ## Mobile / touch
 
 The board scales to the viewport, so it works in a phone browser. Since touch

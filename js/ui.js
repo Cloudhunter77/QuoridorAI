@@ -7,6 +7,7 @@
   const boardEl = document.getElementById('board');
   const statusEl = document.getElementById('status');
   const difficultyEl = document.getElementById('difficulty');
+  const firstMoveEl = document.getElementById('first-move');
   const newGameBtn = document.getElementById('new-game');
   const wallEls = [document.getElementById('walls-0'), document.getElementById('walls-1')];
   const cardEls = [document.querySelector('.player-card.you'), document.querySelector('.player-card.ai')];
@@ -243,8 +244,15 @@
     clearArmed();
     game = new window.QuoridorGame();
     busy = false;
-    setStatus('Your turn — move your pawn or place a wall.');
-    render();
+    if (firstMoveEl.value === 'ai') {
+      // AI (player 1) opens. Set it as the side to move and let it play.
+      game.current = 1;
+      render();
+      aiTurn();
+    } else {
+      setStatus('Your turn — move your pawn or place a wall.');
+      render();
+    }
   }
 
   // --- Init -------------------------------------------------------------
