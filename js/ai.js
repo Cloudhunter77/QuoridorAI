@@ -32,7 +32,7 @@ function evaluate(game) {
   if (oppDist === 0) return -WIN_SCORE;
 
   const wallDiff = game.players[me].wallsLeft - game.players[opp].wallsLeft;
-  return (oppDist - myDist) + 0.1 * wallDiff;
+  return (oppDist - myDist) + 0.2 * wallDiff;
 }
 
 // Anchor key helpers for deduping candidate walls.
@@ -113,11 +113,14 @@ function getCandidateMoves(game, useWalls) {
   return moves;
 }
 
-function negamax(game, depth, alpha, beta, useWalls) {
+function negamax(game, depth, alpha, beta, useWalls, ply) {
   const winner = game.getWinner();
   if (winner !== -1) {
-    // The player who just moved won, i.e. NOT the side to move.
-    return -WIN_SCORE;
+    // The player who just moved won, i.e. NOT the side to move. Subtract `ply`
+    // so that wins reached sooner score higher (and losses are delayed) — this
+    // makes the AI go for the win immediately instead of dithering when several
+    // lines all eventually win.
+    return -(WIN_SCORE - ply);
   }
   if (depth === 0) {
     return evaluate(game);
@@ -127,7 +130,7 @@ function negamax(game, depth, alpha, beta, useWalls) {
   const moves = getCandidateMoves(game, useWalls);
   for (const move of moves) {
     const child = game.apply(move);
-    const val = -negamax(child, depth - 1, -beta, -alpha, useWalls);
+    const val = -negamax(child, depth - 1, -beta, -alpha, useWalls, ply + 1);
     if (val > best) best = val;
     if (val > alpha) alpha = val;
     if (alpha >= beta) break;
@@ -148,23 +151,42 @@ function chooseMove(game, difficulty) {
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
+  const me = game.current;
   let bestVal = -Infinity;
   let bestMoves = [];
-  let alpha = -Infinity;
-  const beta = Infinity;
+  // Use a tiny epsilon for float comparisons (the eval has fractional terms).
+  const EPS = 1e-9;
   for (const move of moves) {
     const child = game.apply(move);
-    const val = -negamax(child, cfg.depth - 1, -beta, -alpha, cfg.useWalls);
-    if (val > bestVal) {
+    // Full window each time (no shared alpha) so ties are detected correctly.
+    const val = -negamax(child, cfg.depth - 1, -Infinity, Infinity, cfg.useWalls, 1);
+    if (val > bestVal + EPS) {
       bestVal = val;
       bestMoves = [move];
-    } else if (val === bestVal) {
+    } else if (val >= bestVal - EPS) {
       bestMoves.push(move);
     }
-    if (val > alpha) alpha = val;
   }
 
-  return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+  // Tie-break toward progress: among equally-rated moves prefer the one that
+  // leaves us closest to our own goal (so we never dither sideways/backward or
+  // waste a turn on a pointless wall when advancing is just as good).
+  let pick = bestMoves;
+  let minDist = Infinity;
+  const byProgress = [];
+  for (const move of bestMoves) {
+    const d = game.apply(move).shortestPath(me).dist;
+    if (d < minDist - EPS) {
+      minDist = d;
+      byProgress.length = 0;
+      byProgress.push(move);
+    } else if (d <= minDist + EPS) {
+      byProgress.push(move);
+    }
+  }
+  if (byProgress.length) pick = byProgress;
+
+  return pick[Math.floor(Math.random() * pick.length)];
 }
 
 window.QuoridorAI = { chooseMove, DIFFICULTY };
