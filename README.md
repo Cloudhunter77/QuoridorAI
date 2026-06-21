@@ -28,6 +28,18 @@ python3 -m http.server 8000
 - When the two pawns are face to face you may **jump** over the opponent
   (straight ahead, or diagonally if a wall is behind them).
 
+## Mobile / touch
+
+The board scales to the viewport, so it works in a phone browser. Since touch
+has no hover, **wall placement is two taps**: the first tap shows a pulsing
+preview, the second tap on the same slot confirms it (tap a cell or another slot
+to cancel). Tap targets for wall slots are enlarged on touch screens. Moving a
+pawn is a single tap on a highlighted cell.
+
+To open it on a phone, either host the folder (e.g. GitHub Pages) and visit the
+URL, or run `python3 -m http.server 8000` on a computer and browse to
+`http://<computer-ip>:8000` from the phone on the same network.
+
 ## Difficulty
 
 | Level  | Search depth | Behaviour                                   |

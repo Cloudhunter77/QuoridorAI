@@ -15,7 +15,12 @@
   let busy = false; // true while AI is thinking or game is over
   let cellNodes = {}; // "r,c" -> element
   const wallLayer = []; // dynamically created wall + preview nodes
-  let previewNode = null;
+  let previewNode = null; // transient hover preview (mouse)
+  let armed = null; // touch: a wall slot awaiting confirmation {orient,r,c,node}
+
+  // On touch devices there is no hover, so wall placement is a two-tap action:
+  // first tap arms a preview, second tap on the same slot confirms it.
+  const isTouch = window.matchMedia('(pointer: coarse)').matches;
 
   // grid line helpers (1-indexed CSS grid lines)
   const cellLine = (i) => 2 * i + 1;
@@ -56,7 +61,7 @@
 
   function addSlot(orient, ar, ac, rowStart, rowEnd, colStart, colEnd) {
     const slot = document.createElement('div');
-    slot.className = 'slot';
+    slot.className = 'slot ' + orient.toLowerCase();
     slot.style.gridRow = `${rowStart} / ${rowEnd}`;
     slot.style.gridColumn = `${colStart} / ${colEnd}`;
     slot.addEventListener('mouseenter', () => onSlotHover(orient, ar, ac));
@@ -140,16 +145,26 @@
     }
   }
 
+  function clearArmed() {
+    if (armed) {
+      if (armed.node && armed.node.parentNode) boardEl.removeChild(armed.node);
+      armed = null;
+    }
+  }
+
   // --- Input handlers ---------------------------------------------------
 
   function onCellClick(r, c) {
     if (busy || game.current !== 0) return;
+    clearArmed(); // tapping the board cancels a pending wall
     const legal = game.getPawnMoves(0).some(([mr, mc]) => mr === r && mc === c);
     if (!legal) return;
     applyAndContinue({ type: 'move', row: r, col: c });
   }
 
+  // Mouse hover preview (touch devices have no hover, so this is gated off).
   function onSlotHover(orient, r, c) {
+    if (isTouch) return;
     clearPreview();
     if (busy || game.current !== 0 || game.players[0].wallsLeft === 0) return;
     const valid = orient === 'H' ? game.canPlaceHWall(r, c) : game.canPlaceVWall(r, c);
@@ -159,6 +174,23 @@
   function onSlotClick(orient, r, c) {
     if (busy || game.current !== 0 || game.players[0].wallsLeft === 0) return;
     const valid = orient === 'H' ? game.canPlaceHWall(r, c) : game.canPlaceVWall(r, c);
+
+    if (isTouch) {
+      // Two-tap: confirm if this exact slot is already armed, else (re)arm it.
+      if (armed && armed.orient === orient && armed.r === r && armed.c === c) {
+        clearArmed();
+        if (valid) applyAndContinue({ type: orient === 'H' ? 'wallH' : 'wallV', r, c });
+        return;
+      }
+      clearArmed();
+      const node = placeWallNode(orient, r, c, true, valid ? 'valid armed' : 'invalid');
+      armed = { orient, r, c, node };
+      previewNode = null; // owned by `armed`, not the transient preview slot
+      setStatus(valid ? 'Tap the same spot again to place the wall.' : "Can't place a wall there.");
+      return;
+    }
+
+    // Mouse: place immediately.
     if (!valid) return;
     clearPreview();
     applyAndContinue({ type: orient === 'H' ? 'wallH' : 'wallV', r, c });
@@ -167,6 +199,8 @@
   // --- Game loop --------------------------------------------------------
 
   function applyAndContinue(move) {
+    clearPreview();
+    clearArmed();
     game = game.apply(move);
     render();
     const winner = game.getWinner();
@@ -205,6 +239,8 @@
   }
 
   function newGame() {
+    clearPreview();
+    clearArmed();
     game = new window.QuoridorGame();
     busy = false;
     setStatus('Your turn — move your pawn or place a wall.');

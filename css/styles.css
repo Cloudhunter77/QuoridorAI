@@ -1,6 +1,7 @@
 :root {
-  --cell: 48px;
-  --gap: 12px;
+  /* Board scales with the viewport so it fits phones, capped on desktop. */
+  --cell: min(48px, 8vw);
+  --gap: min(12px, 2vw);
   --board-bg: #b8895a;
   --board-line: #9c6f43;
   --cell-bg: #e8c79a;
@@ -130,6 +131,24 @@ h1 .accent { color: var(--p1); }
 .wall.preview { opacity: 0.6; }
 .wall.preview.valid { background: var(--valid); }
 .wall.preview.invalid { background: var(--invalid); }
+/* Armed (touch: tapped once, awaiting confirm) pulses to draw the eye. */
+.wall.preview.armed.valid {
+  opacity: 0.85;
+  animation: pulse 0.9s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 0.4; }
+}
+
+/* Bigger, easier-to-hit wall slots on touch screens. */
+@media (pointer: coarse) {
+  .slot::before {
+    content: "";
+    position: absolute;
+    inset: -5px;
+  }
+}
 
 .info {
   display: flex;
