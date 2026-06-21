@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quoridor AI</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <main class="app">
+    <h1>Quoridor<span class="accent"> AI</span></h1>
+
+    <section class="controls">
+      <label>
+        Difficulty
+        <select id="difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+      </label>
+      <button id="new-game">New Game</button>
+    </section>
+
+    <p id="status" class="status">Your turn — move your pawn or place a wall.</p>
+
+    <div class="board-wrap">
+      <div id="board" class="board" aria-label="Quoridor board"></div>
+    </div>
+
+    <section class="info">
+      <div class="player-card you">
+        <span class="dot"></span>
+        <span class="name">You</span>
+        <span class="walls">Walls: <strong id="walls-0">10</strong></span>
+      </div>
+      <div class="player-card ai">
+        <span class="dot"></span>
+        <span class="name">AI</span>
+        <span class="walls">Walls: <strong id="walls-1">10</strong></span>
+      </div>
+    </section>
+
+    <details class="help">
+      <summary>How to play</summary>
+      <ul>
+        <li>You are the blue pawn at the bottom. Reach the <strong>top row</strong> to win.</li>
+        <li>The AI is the red pawn at the top, racing for the bottom row.</li>
+        <li>On your turn either <strong>move one square</strong> (click a highlighted cell) or
+            <strong>place a wall</strong> (click a slot between cells).</li>
+        <li>Walls are two cells long. Click a horizontal slot for a horizontal wall, a vertical
+            slot for a vertical wall. A green preview means it's legal.</li>
+        <li>Walls block movement but can never fully seal off a player's path to their goal.</li>
+        <li>If pawns are face to face you may jump over the opponent.</li>
+      </ul>
+    </details>
+  </main>
+
+  <script src="js/game.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
