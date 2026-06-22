@@ -256,15 +256,12 @@
     aiTurn();
   }
 
-  // The AI's (player 1) pawn cells over its recent turns, used to stop it from
-  // oscillating between two cells.
-  function aiRecentCells() {
-    const set = new Set();
-    for (let i = Math.max(0, cursor - 12); i <= cursor; i++) {
-      const p = states[i].players[1];
-      set.add(p.row + ',' + p.col);
-    }
-    return set;
+  // The cell the AI (player 1) occupied on its previous turn, i.e. two plies
+  // back (turns alternate). Used to discourage shuffling back and forth.
+  function aiPrevCell() {
+    if (cursor < 2) return null;
+    const p = states[cursor - 2].players[1];
+    return p.row + ',' + p.col;
   }
 
   function aiTurn() {
@@ -273,9 +270,9 @@
     render();
     updateNav();
     setTimeout(() => {
-      // Cells the AI occupied recently — it won't step back onto one, so it
-      // commits to a route instead of shuffling between two cells.
-      const move = window.QuoridorAI.chooseMove(game, difficultyEl.value, aiRecentCells());
+      // Pass the AI's previous cell so it commits to a route instead of
+      // shuffling, while still being free to backtrack out of a dead end.
+      const move = window.QuoridorAI.chooseMove(game, difficultyEl.value, aiPrevCell());
       if (move) pushMove(move);
       busy = false;
       render();

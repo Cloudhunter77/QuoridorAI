@@ -205,21 +205,6 @@ class QuoridorGame {
     return -1;
   }
 
-  // Compact string fully identifying a position (pawns + walls + side to move).
-  // Two states with the same signature are the same position — used to detect
-  // repetitions (so the AI commits instead of oscillating) and for navigation.
-  signature() {
-    let s = this.players[0].row + ',' + this.players[0].col + '|' +
-            this.players[1].row + ',' + this.players[1].col + '|' + this.current + '|';
-    for (let r = 0; r < BOARD_SIZE - 1; r++) {
-      for (let c = 0; c < BOARD_SIZE - 1; c++) {
-        if (this.hWalls[r][c]) s += 'H' + r + c;
-        if (this.vWalls[r][c]) s += 'V' + r + c;
-      }
-    }
-    return s;
-  }
-
   // Apply a move object and return a NEW game state (does not mutate this).
   apply(move) {
     const ng = this.clone();

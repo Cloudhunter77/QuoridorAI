@@ -30,17 +30,21 @@ const DIFFICULTY = {
 const TIMEOUT = { timeout: true };
 let searchDeadline = Infinity;
 
-// Penalty applied at the root to a pawn move that returns to a cell the mover
-// occupied recently. Without this the AI can shuffle between two "safe" cells
-// forever (its true shortest path runs through territory the shallow search
-// deems risky) instead of committing to a route. Large enough to override any
-// positional preference, but far below win/loss scores so it never turns a
-// winning move into a losing one or stops the AI escaping a real threat.
-const REVISIT_PENALTY = 50;
+// Discourage the mover from undoing its own progress. A pawn move is penalised
+// in proportion to how much it lengthens the mover's own shortest path to goal,
+// plus a small extra for stepping straight back to the cell it came from. This
+// stops the AI shuffling between two cells — a shallow search can otherwise
+// prefer a "safe" backward step when its real path runs through risky-looking
+// territory — WITHOUT forbidding genuine backtracking, since a move that
+// shortens the path is never penalised.
+const REGRESS_WEIGHT = 4;
+const STEP_BACK_PENALTY = 1;
 
-function repeatPenalty(move, visited) {
-  if (!visited || move.type !== 'move') return 0;
-  return visited.has(move.row + ',' + move.col) ? REVISIT_PENALTY : 0;
+function progressPenalty(move, child, me, curDist, prevCell) {
+  if (move.type !== 'move') return 0;
+  let p = REGRESS_WEIGHT * Math.max(0, child.shortestPath(me).dist - curDist);
+  if (prevCell && move.row + ',' + move.col === prevCell) p += STEP_BACK_PENALTY;
+  return p;
 }
 
 // Evaluation from the perspective of the side to move.
@@ -173,17 +177,19 @@ function sameMove(a, b) {
 // move first), so the first move achieving the best score is also the most
 // forward-progressing one — no separate tie-break needed. `preferredMove` (the
 // best move from the previous iteration) is searched first to sharpen pruning.
-function rootSearchAB(game, depth, useWalls, preferredMove, visited) {
+function rootSearchAB(game, depth, useWalls, preferredMove, prevCell) {
   let moves = getCandidateMoves(game, useWalls);
   if (preferredMove) {
     moves = [preferredMove, ...moves.filter((m) => !sameMove(m, preferredMove))];
   }
+  const me = game.current;
+  const curDist = game.shortestPath(me).dist;
   let bestVal = -Infinity;
   let bestMove = moves[0];
   let alpha = -Infinity;
   for (const move of moves) {
     const child = game.apply(move);
-    const val = -negamax(child, depth - 1, -Infinity, -alpha, useWalls, 1) - repeatPenalty(move, visited);
+    const val = -negamax(child, depth - 1, -Infinity, -alpha, useWalls, 1) - progressPenalty(move, child, me, curDist, prevCell);
     if (val > bestVal) {
       bestVal = val;
       bestMove = move;
@@ -195,13 +201,13 @@ function rootSearchAB(game, depth, useWalls, preferredMove, visited) {
 
 // Iterative deepening within a time budget: search depth 1, 2, 3, … keeping the
 // best move from the deepest fully-completed iteration. Used by Expert.
-function chooseIterative(game, cfg, visited) {
+function chooseIterative(game, cfg, prevCell) {
   searchDeadline = Date.now() + cfg.timeBudget;
   try {
-    let best = rootSearchAB(game, 1, cfg.useWalls, null, visited);
+    let best = rootSearchAB(game, 1, cfg.useWalls, null, prevCell);
     for (let d = 2; d <= cfg.maxDepth; d++) {
       try {
-        best = rootSearchAB(game, d, cfg.useWalls, best.move, visited);
+        best = rootSearchAB(game, d, cfg.useWalls, best.move, prevCell);
       } catch (e) {
         if (e === TIMEOUT) break;
         throw e;
@@ -217,14 +223,14 @@ function chooseIterative(game, cfg, visited) {
 }
 
 // Public: choose a move for the side to move at the given difficulty.
-// `visited` (optional) is a Set of signatures of positions already seen this
-// game; moves returning to one are penalised so the AI commits to a plan.
-function chooseMove(game, difficulty, visited) {
+// `prevCell` (optional) is "row,col" of the cell the mover occupied on its
+// previous turn; used to discourage shuffling back and forth.
+function chooseMove(game, difficulty, prevCell) {
   const cfg = DIFFICULTY[difficulty] || DIFFICULTY.medium;
   const moves = getCandidateMoves(game, cfg.useWalls);
   if (moves.length === 0) return null;
 
-  if (cfg.iterative) return chooseIterative(game, cfg, visited);
+  if (cfg.iterative) return chooseIterative(game, cfg, prevCell);
 
   // Occasionally play a random move (mostly a pawn move) to look beatable.
   if (Math.random() < cfg.randomness) {
@@ -234,6 +240,7 @@ function chooseMove(game, difficulty, visited) {
   }
 
   const me = game.current;
+  const curDist = game.shortestPath(me).dist;
   let bestVal = -Infinity;
   let bestMoves = [];
   // Use a tiny epsilon for float comparisons (the eval has fractional terms).
@@ -241,7 +248,7 @@ function chooseMove(game, difficulty, visited) {
   for (const move of moves) {
     const child = game.apply(move);
     // Full window each time (no shared alpha) so ties are detected correctly.
-    const val = -negamax(child, cfg.depth - 1, -Infinity, Infinity, cfg.useWalls, 1) - repeatPenalty(move, visited);
+    const val = -negamax(child, cfg.depth - 1, -Infinity, Infinity, cfg.useWalls, 1) - progressPenalty(move, child, me, curDist, prevCell);
     if (val > bestVal + EPS) {
       bestVal = val;
       bestMoves = [move];
