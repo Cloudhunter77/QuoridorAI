@@ -59,6 +59,9 @@ h1 .accent { color: var(--p1); }
   cursor: pointer;
 }
 .controls button:hover { background: #38424f; }
+.controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+.controls button:disabled:hover { background: #2b3340; }
+.controls.actions { margin-top: 14px; flex-wrap: wrap; justify-content: center; }
 
 .status {
   min-height: 22px;

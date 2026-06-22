@@ -30,6 +30,16 @@ const DIFFICULTY = {
 const TIMEOUT = { timeout: true };
 let searchDeadline = Infinity;
 
+// Penalty (in shortest-path units) applied at the root to any move that returns
+// the game to a position already seen this game. Large enough to override the
+// small positional differences that otherwise make the AI hedge between two
+// routes forever, but far below win/loss scores so it never causes a blunder.
+const REPEAT_PENALTY = 4;
+
+function repeatPenalty(child, visited) {
+  return visited && visited.has(child.signature()) ? REPEAT_PENALTY : 0;
+}
+
 // Evaluation from the perspective of the side to move.
 function evaluate(game) {
   const me = game.current;
@@ -160,7 +170,7 @@ function sameMove(a, b) {
 // move first), so the first move achieving the best score is also the most
 // forward-progressing one — no separate tie-break needed. `preferredMove` (the
 // best move from the previous iteration) is searched first to sharpen pruning.
-function rootSearchAB(game, depth, useWalls, preferredMove) {
+function rootSearchAB(game, depth, useWalls, preferredMove, visited) {
   let moves = getCandidateMoves(game, useWalls);
   if (preferredMove) {
     moves = [preferredMove, ...moves.filter((m) => !sameMove(m, preferredMove))];
@@ -169,7 +179,8 @@ function rootSearchAB(game, depth, useWalls, preferredMove) {
   let bestMove = moves[0];
   let alpha = -Infinity;
   for (const move of moves) {
-    const val = -negamax(game.apply(move), depth - 1, -Infinity, -alpha, useWalls, 1);
+    const child = game.apply(move);
+    const val = -negamax(child, depth - 1, -Infinity, -alpha, useWalls, 1) - repeatPenalty(child, visited);
     if (val > bestVal) {
       bestVal = val;
       bestMove = move;
@@ -181,13 +192,13 @@ function rootSearchAB(game, depth, useWalls, preferredMove) {
 
 // Iterative deepening within a time budget: search depth 1, 2, 3, … keeping the
 // best move from the deepest fully-completed iteration. Used by Expert.
-function chooseIterative(game, cfg) {
+function chooseIterative(game, cfg, visited) {
   searchDeadline = Date.now() + cfg.timeBudget;
   try {
-    let best = rootSearchAB(game, 1, cfg.useWalls, null);
+    let best = rootSearchAB(game, 1, cfg.useWalls, null, visited);
     for (let d = 2; d <= cfg.maxDepth; d++) {
       try {
-        best = rootSearchAB(game, d, cfg.useWalls, best.move);
+        best = rootSearchAB(game, d, cfg.useWalls, best.move, visited);
       } catch (e) {
         if (e === TIMEOUT) break;
         throw e;
@@ -203,12 +214,14 @@ function chooseIterative(game, cfg) {
 }
 
 // Public: choose a move for the side to move at the given difficulty.
-function chooseMove(game, difficulty) {
+// `visited` (optional) is a Set of signatures of positions already seen this
+// game; moves returning to one are penalised so the AI commits to a plan.
+function chooseMove(game, difficulty, visited) {
   const cfg = DIFFICULTY[difficulty] || DIFFICULTY.medium;
   const moves = getCandidateMoves(game, cfg.useWalls);
   if (moves.length === 0) return null;
 
-  if (cfg.iterative) return chooseIterative(game, cfg);
+  if (cfg.iterative) return chooseIterative(game, cfg, visited);
 
   // Occasionally play a random move (mostly a pawn move) to look beatable.
   if (Math.random() < cfg.randomness) {
@@ -225,7 +238,7 @@ function chooseMove(game, difficulty) {
   for (const move of moves) {
     const child = game.apply(move);
     // Full window each time (no shared alpha) so ties are detected correctly.
-    const val = -negamax(child, cfg.depth - 1, -Infinity, Infinity, cfg.useWalls, 1);
+    const val = -negamax(child, cfg.depth - 1, -Infinity, Infinity, cfg.useWalls, 1) - repeatPenalty(child, visited);
     if (val > bestVal + EPS) {
       bestVal = val;
       bestMoves = [move];

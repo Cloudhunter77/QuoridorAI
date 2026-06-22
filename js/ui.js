@@ -1,6 +1,10 @@
 /*
  * Quoridor UI: builds the board, handles input, and drives the human-vs-AI
- * game loop. Player 0 is the human, player 1 is the AI.
+ * game loop. Player 0 is the human (blue, bottom), player 1 is the AI.
+ *
+ * Game state is kept as a history of immutable snapshots so we can support
+ * undo/redo, record a replay, and tell the AI which positions have already
+ * occurred (so it commits to a plan instead of oscillating).
  */
 (function () {
   const { BOARD_SIZE } = window.QUORIDOR;
@@ -9,33 +13,45 @@
   const difficultyEl = document.getElementById('difficulty');
   const firstMoveEl = document.getElementById('first-move');
   const newGameBtn = document.getElementById('new-game');
+  const undoBtn = document.getElementById('undo');
+  const redoBtn = document.getElementById('redo');
+  const saveBtn = document.getElementById('save-replay');
+  const loadBtn = document.getElementById('load-replay');
+  const loadFileEl = document.getElementById('load-file');
   const wallEls = [document.getElementById('walls-0'), document.getElementById('walls-1')];
   const cardEls = [document.querySelector('.player-card.you'), document.querySelector('.player-card.ai')];
 
-  let game;
-  let busy = false; // true while AI is thinking or game is over
-  let cellNodes = {}; // "r,c" -> element
-  const wallLayer = []; // dynamically created wall + preview nodes
-  let previewNode = null; // transient hover preview (mouse)
-  let armed = null; // touch: a wall slot awaiting confirmation {orient,r,c,node}
+  // History model: states[i] is a snapshot; moves[i] transitions states[i] ->
+  // states[i+1]; cursor is the index of the state currently shown.
+  let states = [];
+  let moves = [];
+  let cursor = 0;
+  let game; // always === states[cursor]
 
-  // On touch devices there is no hover, so wall placement is a two-tap action:
-  // first tap arms a preview, second tap on the same slot confirms it.
+  let busy = false;     // AI is thinking (block input)
+  let gameOver = false; // a player has reached their goal
+  let cellNodes = {};
+  const wallLayer = [];
+  let previewNode = null;
+  let armed = null; // touch: a wall slot awaiting confirmation
+
   const isTouch = window.matchMedia('(pointer: coarse)').matches;
+  const DIFFICULTY_VALUES = ['easy', 'medium', 'hard', 'expert'];
 
-  // grid line helpers (1-indexed CSS grid lines)
   const cellLine = (i) => 2 * i + 1;
   const gapLine = (i) => 2 * i + 2;
+
+  // --- Board construction ----------------------------------------------
 
   function buildBoard() {
     boardEl.innerHTML = '';
     cellNodes = {};
-
-    // Cells
     for (let r = 0; r < BOARD_SIZE; r++) {
       for (let c = 0; c < BOARD_SIZE; c++) {
         const cell = document.createElement('div');
         cell.className = 'cell';
+        cell.dataset.row = r;
+        cell.dataset.col = c;
         cell.style.gridRow = `${cellLine(r)} / ${cellLine(r) + 1}`;
         cell.style.gridColumn = `${cellLine(c)} / ${cellLine(c) + 1}`;
         cell.addEventListener('click', () => onCellClick(r, c));
@@ -43,19 +59,14 @@
         cellNodes[r + ',' + c] = cell;
       }
     }
-
-    // Vertical wall slots (between horizontally adjacent cells)
     for (let r = 0; r < BOARD_SIZE; r++) {
       for (let c = 0; c < BOARD_SIZE - 1; c++) {
-        const anchorR = Math.min(r, BOARD_SIZE - 2);
-        addSlot('V', anchorR, c, cellLine(r), cellLine(r) + 1, gapLine(c), gapLine(c) + 1);
+        addSlot('V', Math.min(r, BOARD_SIZE - 2), c, cellLine(r), cellLine(r) + 1, gapLine(c), gapLine(c) + 1);
       }
     }
-    // Horizontal wall slots (between vertically adjacent cells)
     for (let r = 0; r < BOARD_SIZE - 1; r++) {
       for (let c = 0; c < BOARD_SIZE; c++) {
-        const anchorC = Math.min(c, BOARD_SIZE - 2);
-        addSlot('H', r, anchorC, gapLine(r), gapLine(r) + 1, cellLine(c), cellLine(c) + 1);
+        addSlot('H', r, Math.min(c, BOARD_SIZE - 2), gapLine(r), gapLine(r) + 1, cellLine(c), cellLine(c) + 1);
       }
     }
   }
@@ -73,48 +84,43 @@
 
   // --- Rendering --------------------------------------------------------
 
+  function humanCanAct() {
+    return !busy && !gameOver && game.current === 0;
+  }
+
   function render() {
-    // Clear pawns
     for (const key in cellNodes) {
-      const node = cellNodes[key];
-      node.innerHTML = '';
-      node.classList.remove('legal');
+      cellNodes[key].innerHTML = '';
+      cellNodes[key].classList.remove('legal');
     }
-    // Pawns
     for (let i = 0; i < 2; i++) {
       const p = game.players[i];
       const pawn = document.createElement('div');
       pawn.className = 'pawn p' + i;
       cellNodes[p.row + ',' + p.col].appendChild(pawn);
     }
-    // Walls
     clearWalls();
-    drawWalls(game.hWalls, 'H', false);
-    drawWalls(game.vWalls, 'V', false);
+    drawWalls(game.hWalls, 'H');
+    drawWalls(game.vWalls, 'V');
 
-    // Wall counts + active player highlight
     wallEls[0].textContent = game.players[0].wallsLeft;
     wallEls[1].textContent = game.players[1].wallsLeft;
-    cardEls[0].classList.toggle('active', game.current === 0 && !busy);
-    cardEls[1].classList.toggle('active', game.current === 1);
+    cardEls[0].classList.toggle('active', humanCanAct());
+    cardEls[1].classList.toggle('active', !gameOver && game.current === 1);
 
-    // Legal pawn destinations (only on human's turn)
-    if (!busy && game.current === 0) {
+    if (humanCanAct()) {
       for (const [r, c] of game.getPawnMoves(0)) {
         cellNodes[r + ',' + c].classList.add('legal');
       }
     }
-
-    // Enable/disable wall slots
-    const slots = boardEl.querySelectorAll('.slot');
-    const canWall = !busy && game.current === 0 && game.players[0].wallsLeft > 0;
-    slots.forEach((s) => s.classList.toggle('enabled', canWall));
+    const canWall = humanCanAct() && game.players[0].wallsLeft > 0;
+    boardEl.querySelectorAll('.slot').forEach((s) => s.classList.toggle('enabled', canWall));
   }
 
-  function drawWalls(grid, orient, isPreview, validity) {
+  function drawWalls(grid, orient) {
     for (let r = 0; r < grid.length; r++) {
       for (let c = 0; c < grid[r].length; c++) {
-        if (grid[r][c]) placeWallNode(orient, r, c, isPreview, validity);
+        if (grid[r][c]) placeWallNode(orient, r, c, false);
       }
     }
   }
@@ -156,28 +162,25 @@
   // --- Input handlers ---------------------------------------------------
 
   function onCellClick(r, c) {
-    if (busy || game.current !== 0) return;
-    clearArmed(); // tapping the board cancels a pending wall
-    const legal = game.getPawnMoves(0).some(([mr, mc]) => mr === r && mc === c);
-    if (!legal) return;
+    if (!humanCanAct()) return;
+    clearArmed();
+    if (!game.getPawnMoves(0).some(([mr, mc]) => mr === r && mc === c)) return;
     applyAndContinue({ type: 'move', row: r, col: c });
   }
 
-  // Mouse hover preview (touch devices have no hover, so this is gated off).
   function onSlotHover(orient, r, c) {
     if (isTouch) return;
     clearPreview();
-    if (busy || game.current !== 0 || game.players[0].wallsLeft === 0) return;
+    if (!humanCanAct() || game.players[0].wallsLeft === 0) return;
     const valid = orient === 'H' ? game.canPlaceHWall(r, c) : game.canPlaceVWall(r, c);
     placeWallNode(orient, r, c, true, valid ? 'valid' : 'invalid');
   }
 
   function onSlotClick(orient, r, c) {
-    if (busy || game.current !== 0 || game.players[0].wallsLeft === 0) return;
+    if (!humanCanAct() || game.players[0].wallsLeft === 0) return;
     const valid = orient === 'H' ? game.canPlaceHWall(r, c) : game.canPlaceVWall(r, c);
 
     if (isTouch) {
-      // Two-tap: confirm if this exact slot is already armed, else (re)arm it.
       if (armed && armed.orient === orient && armed.r === r && armed.c === c) {
         clearArmed();
         if (valid) applyAndContinue({ type: orient === 'H' ? 'wallH' : 'wallV', r, c });
@@ -186,27 +189,40 @@
       clearArmed();
       const node = placeWallNode(orient, r, c, true, valid ? 'valid armed' : 'invalid');
       armed = { orient, r, c, node };
-      previewNode = null; // owned by `armed`, not the transient preview slot
+      previewNode = null;
       setStatus(valid ? 'Tap the same spot again to place the wall.' : "Can't place a wall there.");
       return;
     }
 
-    // Mouse: place immediately.
     if (!valid) return;
     clearPreview();
     applyAndContinue({ type: orient === 'H' ? 'wallH' : 'wallV', r, c });
   }
 
-  // --- Game loop --------------------------------------------------------
+  // --- History / game loop ---------------------------------------------
+
+  function setCursor(i) {
+    cursor = i;
+    game = states[cursor];
+  }
+
+  function pushMove(move) {
+    // Drop any redo branch, then append the new state.
+    states.length = cursor + 1;
+    moves.length = cursor;
+    states.push(game.apply(move));
+    moves.push(move);
+    setCursor(cursor + 1);
+  }
 
   function applyAndContinue(move) {
     clearPreview();
     clearArmed();
-    game = game.apply(move);
+    pushMove(move);
     render();
+    updateNav();
     const winner = game.getWinner();
     if (winner !== -1) return endGame(winner);
-    // Now it's the AI's turn.
     aiTurn();
   }
 
@@ -214,22 +230,25 @@
     busy = true;
     setStatus('AI is thinking…', 'thinking');
     render();
-    // Defer so the UI can paint the "thinking" state before we block.
+    updateNav();
     setTimeout(() => {
-      const difficulty = difficultyEl.value;
-      const move = window.QuoridorAI.chooseMove(game, difficulty);
-      if (move) game = game.apply(move);
+      // Positions already seen this game — the AI avoids returning to them.
+      const visited = new Set(states.slice(0, cursor + 1).map((s) => s.signature()));
+      const move = window.QuoridorAI.chooseMove(game, difficultyEl.value, visited);
+      if (move) pushMove(move);
       busy = false;
       render();
       const winner = game.getWinner();
       if (winner !== -1) return endGame(winner);
       setStatus('Your turn — move your pawn or place a wall.');
+      updateNav();
     }, 60);
   }
 
   function endGame(winner) {
-    busy = true;
+    gameOver = true;
     render();
+    updateNav();
     if (winner === 0) setStatus('🎉 You win! Reached the top row.', 'win');
     else setStatus('The AI wins this time. Try again!', 'lose');
   }
@@ -239,25 +258,194 @@
     statusEl.className = 'status' + (cls ? ' ' + cls : '');
   }
 
-  function newGame() {
-    clearPreview();
-    clearArmed();
-    game = new window.QuoridorGame();
+  // --- Undo / redo ------------------------------------------------------
+
+  // Index of the nearest human-to-move state strictly before `from`, or -1.
+  function prevHumanState(from) {
+    let t = from - 1;
+    while (t > 0 && states[t].current !== 0) t--;
+    return t >= 0 && t < from && states[t].current === 0 ? t : -1;
+  }
+
+  // Index of the next human-to-move state after `from` (or the last state).
+  function nextHumanState(from) {
+    let t = from + 1;
+    while (t < states.length && states[t].current !== 0) t++;
+    if (t >= states.length) return cursor < states.length - 1 ? states.length - 1 : -1;
+    return t;
+  }
+
+  function undo() {
+    if (busy) return;
+    const t = prevHumanState(cursor);
+    if (t < 0) return;
+    setCursor(t);
+    gameOver = false;
+    setStatus('Took back a turn — your move.');
+    render();
+    updateNav();
+  }
+
+  function redo() {
+    if (busy) return;
+    const t = nextHumanState(cursor);
+    if (t < 0) return;
+    setCursor(t);
+    gameOver = false;
+    render();
+    updateNav();
+    const winner = game.getWinner();
+    if (winner !== -1) endGame(winner);
+    else setStatus('Your turn — move your pawn or place a wall.');
+  }
+
+  function updateNav() {
+    undoBtn.disabled = busy || prevHumanState(cursor) < 0;
+    redoBtn.disabled = busy || cursor >= states.length - 1;
+    saveBtn.disabled = cursor <= 0;
+  }
+
+  // --- Replay record (save / load) -------------------------------------
+  //
+  // Encoding: a pawn move to (row,col) is "<col-letter a-i><row 1-9>", e.g. e9.
+  // A wall is "<col-letter a-h><row 1-8><h|v>" using its anchor, e.g. e3h.
+
+  function encodeMove(m) {
+    if (m.type === 'move') return String.fromCharCode(97 + m.col) + (m.row + 1);
+    return String.fromCharCode(97 + m.c) + (m.r + 1) + (m.type === 'wallH' ? 'h' : 'v');
+  }
+
+  function decodeToken(tok) {
+    let m;
+    if ((m = /^([a-i])([1-9])$/.exec(tok))) {
+      return { type: 'move', col: m[1].charCodeAt(0) - 97, row: +m[2] - 1 };
+    }
+    if ((m = /^([a-h])([1-8])([hv])$/.exec(tok))) {
+      return { type: m[3] === 'h' ? 'wallH' : 'wallV', c: m[1].charCodeAt(0) - 97, r: +m[2] - 1 };
+    }
+    return null;
+  }
+
+  function isLegalMove(state, m) {
+    const p = state.players[state.current];
+    if (m.type === 'move') return state.getPawnMoves(state.current).some(([r, c]) => r === m.row && c === m.col);
+    if (p.wallsLeft <= 0) return false;
+    return m.type === 'wallH' ? state.canPlaceHWall(m.r, m.c) : state.canPlaceVWall(m.r, m.c);
+  }
+
+  function saveReplay() {
+    const tokens = moves.slice(0, cursor).map(encodeMove);
+    const text = [
+      '# Quoridor Game Record v1',
+      'difficulty: ' + difficultyEl.value,
+      'first: ' + firstMoveEl.value,
+      'date: ' + new Date().toISOString(),
+      'moves: ' + tokens.join(' '),
+      '',
+    ].join('\n');
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    download(text, 'quoridor-' + stamp + '.qgr');
+  }
+
+  function download(text, filename) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function loadReplay(text) {
+    const lines = text.split(/\r?\n/);
+    let diff = 'medium';
+    let first = 'human';
+    let tokens = [];
+    for (const ln of lines) {
+      if (ln.startsWith('difficulty:')) diff = ln.slice(11).trim();
+      else if (ln.startsWith('first:')) first = ln.slice(6).trim();
+      else if (ln.startsWith('moves:')) tokens = ln.slice(6).trim().split(/\s+/).filter(Boolean);
+    }
+    // Rebuild and validate against the rules before committing.
+    const init = new window.QuoridorGame();
+    init.current = first === 'ai' ? 1 : 0;
+    const newStates = [init];
+    const newMoves = [];
+    let cur = init;
+    for (let i = 0; i < tokens.length; i++) {
+      const mv = decodeToken(tokens[i]);
+      if (!mv || !isLegalMove(cur, mv)) {
+        setStatus('Could not load replay: invalid move "' + tokens[i] + '".', 'lose');
+        return;
+      }
+      cur = cur.apply(mv);
+      newStates.push(cur);
+      newMoves.push(mv);
+    }
+    states = newStates;
+    moves = newMoves;
+    if (DIFFICULTY_VALUES.includes(diff)) difficultyEl.value = diff;
+    if (first === 'ai' || first === 'human') firstMoveEl.value = first;
     busy = false;
-    if (firstMoveEl.value === 'ai') {
-      // AI (player 1) opens. Set it as the side to move and let it play.
-      game.current = 1;
-      render();
+    gameOver = false;
+    setCursor(states.length - 1);
+    render();
+    updateNav();
+    const winner = game.getWinner();
+    if (winner !== -1) {
+      endGame(winner);
+    } else if (game.current === 1) {
+      setStatus('Replay loaded — AI to move.');
       aiTurn();
     } else {
-      setStatus('Your turn — move your pawn or place a wall.');
-      render();
+      setStatus('Replay loaded (' + newMoves.length + ' moves) — your turn.');
     }
   }
 
-  // --- Init -------------------------------------------------------------
+  // --- New game / init --------------------------------------------------
+
+  function newGame() {
+    clearPreview();
+    clearArmed();
+    const init = new window.QuoridorGame();
+    if (firstMoveEl.value === 'ai') init.current = 1;
+    states = [init];
+    moves = [];
+    busy = false;
+    gameOver = false;
+    setCursor(0);
+    render();
+    updateNav();
+    if (game.current === 1) aiTurn();
+    else setStatus('Your turn — move your pawn or place a wall.');
+  }
 
   buildBoard();
   newGameBtn.addEventListener('click', newGame);
+  undoBtn.addEventListener('click', undo);
+  redoBtn.addEventListener('click', redo);
+  saveBtn.addEventListener('click', saveReplay);
+  loadBtn.addEventListener('click', () => loadFileEl.click());
+  loadFileEl.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => loadReplay(String(reader.result));
+    reader.readAsText(file);
+    loadFileEl.value = ''; // allow re-loading the same file
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === 'z' || e.key === 'Z') {
+      e.preventDefault();
+      e.shiftKey ? redo() : undo();
+    } else if (e.key === 'y' || e.key === 'Y') {
+      e.preventDefault();
+      redo();
+    }
+  });
+
   newGame();
 })();

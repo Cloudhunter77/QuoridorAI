@@ -31,6 +31,30 @@ python3 -m http.server 8000
 You can pick the difficulty and whether **you or the AI moves first** before
 starting a new game (you're always the blue pawn at the bottom either way).
 
+## Controls, undo & replays
+
+- **Undo / Redo** step back and forth a full turn at a time (your move plus the
+  AI's reply). `Ctrl/Cmd+Z` undoes, `Ctrl/Cmd+Shift+Z` (or `Ctrl+Y`) redoes.
+- **Save replay** downloads the game so far as a `.qgr` text file.
+- **Load replay** reads a `.qgr` file back, validates every move against the
+  rules, and reconstructs the position (you can then Undo through it or keep
+  playing).
+
+A `.qgr` file is plain text with a small header and a list of move tokens:
+
+```
+# Quoridor Game Record v1
+difficulty: hard
+first: human
+date: 2026-06-22T12:00:00.000Z
+moves: e8 e2 d8 e3h ...
+```
+
+Move encoding (columns `a`–`i` left→right, rows `1`–`9` top→bottom):
+- A pawn move is the destination cell, e.g. `e8`.
+- A wall is its anchor plus orientation, e.g. `e3h` (horizontal) or `d6v`
+  (vertical), with columns `a`–`h` and rows `1`–`8`.
+
 ## Mobile / touch
 
 The board scales to the viewport, so it works in a phone browser. Since touch
@@ -62,6 +86,9 @@ URL, or run `python3 -m http.server 8000` on a computer and browse to
   players' shortest paths to goal (breadth-first search over the board honoring
   walls), with a small bonus for keeping walls in hand.
 - **Search:** negamax with alpha-beta pruning.
+- **Commitment:** moves that would return to a position already seen this game
+  are penalised, so the AI commits to a route instead of oscillating between two
+  equally-good paths.
 - **Move generation:** to keep the branching factor manageable in the browser,
   candidate wall placements are limited to walls that actually interfere with
   the opponent's current shortest path or sit next to a pawn, rather than all
