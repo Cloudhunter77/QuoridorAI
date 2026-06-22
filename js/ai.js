@@ -30,14 +30,17 @@ const DIFFICULTY = {
 const TIMEOUT = { timeout: true };
 let searchDeadline = Infinity;
 
-// Penalty (in shortest-path units) applied at the root to any move that returns
-// the game to a position already seen this game. Large enough to override the
-// small positional differences that otherwise make the AI hedge between two
-// routes forever, but far below win/loss scores so it never causes a blunder.
-const REPEAT_PENALTY = 4;
+// Penalty applied at the root to a pawn move that returns to a cell the mover
+// occupied recently. Without this the AI can shuffle between two "safe" cells
+// forever (its true shortest path runs through territory the shallow search
+// deems risky) instead of committing to a route. Large enough to override any
+// positional preference, but far below win/loss scores so it never turns a
+// winning move into a losing one or stops the AI escaping a real threat.
+const REVISIT_PENALTY = 50;
 
-function repeatPenalty(child, visited) {
-  return visited && visited.has(child.signature()) ? REPEAT_PENALTY : 0;
+function repeatPenalty(move, visited) {
+  if (!visited || move.type !== 'move') return 0;
+  return visited.has(move.row + ',' + move.col) ? REVISIT_PENALTY : 0;
 }
 
 // Evaluation from the perspective of the side to move.
@@ -180,7 +183,7 @@ function rootSearchAB(game, depth, useWalls, preferredMove, visited) {
   let alpha = -Infinity;
   for (const move of moves) {
     const child = game.apply(move);
-    const val = -negamax(child, depth - 1, -Infinity, -alpha, useWalls, 1) - repeatPenalty(child, visited);
+    const val = -negamax(child, depth - 1, -Infinity, -alpha, useWalls, 1) - repeatPenalty(move, visited);
     if (val > bestVal) {
       bestVal = val;
       bestMove = move;
@@ -238,7 +241,7 @@ function chooseMove(game, difficulty, visited) {
   for (const move of moves) {
     const child = game.apply(move);
     // Full window each time (no shared alpha) so ties are detected correctly.
-    const val = -negamax(child, cfg.depth - 1, -Infinity, Infinity, cfg.useWalls, 1) - repeatPenalty(child, visited);
+    const val = -negamax(child, cfg.depth - 1, -Infinity, Infinity, cfg.useWalls, 1) - repeatPenalty(move, visited);
     if (val > bestVal + EPS) {
       bestVal = val;
       bestMoves = [move];

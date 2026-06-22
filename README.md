@@ -93,9 +93,10 @@ URL, or run `python3 -m http.server 8000` on a computer and browse to
   players' shortest paths to goal (breadth-first search over the board honoring
   walls), with a small bonus for keeping walls in hand.
 - **Search:** negamax with alpha-beta pruning.
-- **Commitment:** moves that would return to a position already seen this game
-  are penalised, so the AI commits to a route instead of oscillating between two
-  equally-good paths.
+- **Commitment:** the AI is penalised for stepping its pawn back onto a cell it
+  occupied recently, so it commits to a route through the wall maze instead of
+  shuffling between two cells (which a shallow search can otherwise prefer when
+  its real path runs through territory it deems risky).
 - **Move generation:** to keep the branching factor manageable in the browser,
   candidate wall placements are limited to walls that actually interfere with
   the opponent's current shortest path or sit next to a pawn, rather than all

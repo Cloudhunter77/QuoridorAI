@@ -256,15 +256,26 @@
     aiTurn();
   }
 
+  // The AI's (player 1) pawn cells over its recent turns, used to stop it from
+  // oscillating between two cells.
+  function aiRecentCells() {
+    const set = new Set();
+    for (let i = Math.max(0, cursor - 12); i <= cursor; i++) {
+      const p = states[i].players[1];
+      set.add(p.row + ',' + p.col);
+    }
+    return set;
+  }
+
   function aiTurn() {
     busy = true;
     setStatus('AI is thinking…', 'thinking');
     render();
     updateNav();
     setTimeout(() => {
-      // Positions already seen this game — the AI avoids returning to them.
-      const visited = new Set(states.slice(0, cursor + 1).map((s) => s.signature()));
-      const move = window.QuoridorAI.chooseMove(game, difficultyEl.value, visited);
+      // Cells the AI occupied recently — it won't step back onto one, so it
+      // commits to a route instead of shuffling between two cells.
+      const move = window.QuoridorAI.chooseMove(game, difficultyEl.value, aiRecentCells());
       if (move) pushMove(move);
       busy = false;
       render();
