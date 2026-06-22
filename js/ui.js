@@ -18,8 +18,38 @@
   const saveBtn = document.getElementById('save-replay');
   const loadBtn = document.getElementById('load-replay');
   const loadFileEl = document.getElementById('load-file');
+  const resetScoreBtn = document.getElementById('reset-score');
   const wallEls = [document.getElementById('walls-0'), document.getElementById('walls-1')];
+  const scoreEls = [document.getElementById('score-0'), document.getElementById('score-1')];
   const cardEls = [document.querySelector('.player-card.you'), document.querySelector('.player-card.ai')];
+
+  // Persistent win tally (survives reloads). Index 0 = you, 1 = AI.
+  const SCORE_KEY = 'quoridor.score';
+  let score = loadScore();
+  let currentGameScored = false; // guard against counting a game twice
+
+  function loadScore() {
+    try {
+      const s = JSON.parse(localStorage.getItem(SCORE_KEY));
+      if (s && typeof s.you === 'number' && typeof s.ai === 'number') return s;
+    } catch (e) { /* ignore */ }
+    return { you: 0, ai: 0 };
+  }
+
+  function saveScore() {
+    try { localStorage.setItem(SCORE_KEY, JSON.stringify(score)); } catch (e) { /* ignore */ }
+  }
+
+  function renderScore() {
+    scoreEls[0].textContent = score.you;
+    scoreEls[1].textContent = score.ai;
+  }
+
+  function resetScore() {
+    score = { you: 0, ai: 0 };
+    saveScore();
+    renderScore();
+  }
 
   // History model: states[i] is a snapshot; moves[i] transitions states[i] ->
   // states[i+1]; cursor is the index of the state currently shown.
@@ -222,7 +252,7 @@
     render();
     updateNav();
     const winner = game.getWinner();
-    if (winner !== -1) return endGame(winner);
+    if (winner !== -1) return endGame(winner, true);
     aiTurn();
   }
 
@@ -239,14 +269,22 @@
       busy = false;
       render();
       const winner = game.getWinner();
-      if (winner !== -1) return endGame(winner);
+      if (winner !== -1) return endGame(winner, true);
       setStatus('Your turn — move your pawn or place a wall.');
       updateNav();
     }, 60);
   }
 
-  function endGame(winner) {
+  function endGame(winner, live) {
     gameOver = true;
+    // Count the result once per game, and only when it ends through live play
+    // (not via redo/replay navigation).
+    if (live && !currentGameScored) {
+      currentGameScored = true;
+      if (winner === 0) score.you++; else score.ai++;
+      saveScore();
+      renderScore();
+    }
     render();
     updateNav();
     if (winner === 0) setStatus('🎉 You win! Reached the top row.', 'win');
@@ -390,6 +428,7 @@
     if (first === 'ai' || first === 'human') firstMoveEl.value = first;
     busy = false;
     gameOver = false;
+    currentGameScored = true; // loaded games don't affect the win tally
     setCursor(states.length - 1);
     render();
     updateNav();
@@ -415,6 +454,7 @@
     moves = [];
     busy = false;
     gameOver = false;
+    currentGameScored = false;
     setCursor(0);
     render();
     updateNav();
@@ -423,10 +463,12 @@
   }
 
   buildBoard();
+  renderScore();
   newGameBtn.addEventListener('click', newGame);
   undoBtn.addEventListener('click', undo);
   redoBtn.addEventListener('click', redo);
   saveBtn.addEventListener('click', saveReplay);
+  resetScoreBtn.addEventListener('click', resetScore);
   loadBtn.addEventListener('click', () => loadFileEl.click());
   loadFileEl.addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];

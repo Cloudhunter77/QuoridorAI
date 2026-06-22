@@ -157,7 +157,11 @@ h1 .accent { color: var(--p1); }
   display: flex;
   gap: 16px;
   margin-top: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
+.player-card .score { color: #9fb0c3; }
+.player-card .score strong { color: #eef1f5; }
 .player-card {
   display: flex;
   align-items: center;

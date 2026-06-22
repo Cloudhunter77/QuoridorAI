@@ -31,6 +31,13 @@ python3 -m http.server 8000
 You can pick the difficulty and whether **you or the AI moves first** before
 starting a new game (you're always the blue pawn at the bottom either way).
 
+## Score
+
+A running **win tally** (You vs AI) is shown on the player cards and saved in
+your browser's `localStorage`, so it survives reloads. It increments once per
+finished game and can be cleared with **Reset score**. Loaded replays don't
+affect the tally.
+
 ## Controls, undo & replays
 
 - **Undo / Redo** step back and forth a full turn at a time (your move plus the
