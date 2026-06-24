@@ -93,13 +93,14 @@ function addNearbyAnchors(pawn, set) {
 function getCandidateMoves(game, useWalls) {
   const moves = [];
 
-  // Pawn moves, ordered most-advancing-first (cheap proxy: rows from goal) so
-  // pruning sees the strongest move early without a BFS per move.
+  // Pawn moves, ordered most-advancing-first (cheap proxy: steps from the goal
+  // edge) so pruning sees the strongest move early without a BFS per move.
   const me = game.current;
-  const goalRow = game.players[me].goalRow;
+  const goal = game.players[me];
+  const distToGoal = (row, col) => (goal.goalAxis === 'row' ? Math.abs(row - goal.goalValue) : Math.abs(col - goal.goalValue));
   const pawnMoves = game.getPawnMoves(me).map(([row, col]) => ({
     move: { type: 'move', row, col },
-    key: Math.abs(row - goalRow),
+    key: distToGoal(row, col),
   }));
   pawnMoves.sort((x, y) => x.key - y.key);
   for (const pm of pawnMoves) moves.push(pm.move);

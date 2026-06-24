@@ -113,8 +113,10 @@ h1 .accent { color: var(--p1); }
   border-radius: 50%;
   box-shadow: inset 0 -4px 6px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.4);
 }
-.pawn.p0 { background: radial-gradient(circle at 35% 30%, #6ea4ec, var(--p0)); }
-.pawn.p1 { background: radial-gradient(circle at 35% 30%, #ec7070, var(--p1)); }
+.pawn.blue   { background: radial-gradient(circle at 35% 30%, #6ea4ec, #2f6fd0); }
+.pawn.red    { background: radial-gradient(circle at 35% 30%, #ec7070, #d23b3b); }
+.pawn.green  { background: radial-gradient(circle at 35% 30%, #6fd698, #2faf5a); }
+.pawn.yellow { background: radial-gradient(circle at 35% 30%, #f3cf76, #e0a72f); }
 
 /* Wall slots (thin clickable strips between cells) */
 .slot {
@@ -176,9 +178,12 @@ h1 .accent { color: var(--p1); }
   height: 14px;
   border-radius: 50%;
 }
-.player-card.you .dot { background: var(--p0); }
-.player-card.ai .dot { background: var(--p1); }
+.dot.blue   { background: #2f6fd0; }
+.dot.red    { background: #d23b3b; }
+.dot.green  { background: #2faf5a; }
+.dot.yellow { background: #e0a72f; }
 .player-card.active { outline: 2px solid #f5c451; }
+#first-move-opt[hidden], #difficulty-opt[hidden] { display: none; }
 
 .help {
   margin-top: 22px;

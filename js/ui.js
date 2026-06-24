@@ -1,17 +1,23 @@
 /*
- * Quoridor UI: builds the board, handles input, and drives the human-vs-AI
- * game loop. Player 0 is the human (blue, bottom), player 1 is the AI.
+ * Quoridor UI: builds the board, handles input, and drives the game loop.
+ *
+ * Two modes:
+ *   2P vs AI       — player 0 is the human (blue), player 1 is the AI (red).
+ *   4P pass & play — four humans take turns on one device; no AI.
  *
  * Game state is kept as a history of immutable snapshots so we can support
- * undo/redo, record a replay, and tell the AI which positions have already
- * occurred (so it commits to a plan instead of oscillating).
+ * undo/redo and record a replay.
  */
 (function () {
   const { BOARD_SIZE } = window.QUORIDOR;
   const boardEl = document.getElementById('board');
   const statusEl = document.getElementById('status');
+  const infoEl = document.getElementById('info');
+  const modeEl = document.getElementById('mode');
   const difficultyEl = document.getElementById('difficulty');
   const firstMoveEl = document.getElementById('first-move');
+  const difficultyOpt = document.getElementById('difficulty-opt');
+  const firstMoveOpt = document.getElementById('first-move-opt');
   const newGameBtn = document.getElementById('new-game');
   const undoBtn = document.getElementById('undo');
   const redoBtn = document.getElementById('redo');
@@ -19,57 +25,50 @@
   const loadBtn = document.getElementById('load-replay');
   const loadFileEl = document.getElementById('load-file');
   const resetScoreBtn = document.getElementById('reset-score');
-  const wallEls = [document.getElementById('walls-0'), document.getElementById('walls-1')];
-  const scoreEls = [document.getElementById('score-0'), document.getElementById('score-1')];
-  const cardEls = [document.querySelector('.player-card.you'), document.querySelector('.player-card.ai')];
 
-  // Persistent win tally (survives reloads). Index 0 = you, 1 = AI.
-  const SCORE_KEY = 'quoridor.score';
-  let score = loadScore();
-  let currentGameScored = false; // guard against counting a game twice
+  // Per-player display metadata (colour + label + goal-direction arrow).
+  const PLAYER_META = {
+    2: [
+      { label: 'You', color: 'blue', arrow: '↑' },
+      { label: 'AI', color: 'red', arrow: '↓' },
+    ],
+    4: [
+      { label: 'P1', color: 'blue', arrow: '↑' },
+      { label: 'P2', color: 'green', arrow: '←' },
+      { label: 'P3', color: 'red', arrow: '↓' },
+      { label: 'P4', color: 'yellow', arrow: '→' },
+    ],
+  };
 
-  function loadScore() {
-    try {
-      const s = JSON.parse(localStorage.getItem(SCORE_KEY));
-      if (s && typeof s.you === 'number' && typeof s.ai === 'number') return s;
-    } catch (e) { /* ignore */ }
-    return { you: 0, ai: 0 };
-  }
-
-  function saveScore() {
-    try { localStorage.setItem(SCORE_KEY, JSON.stringify(score)); } catch (e) { /* ignore */ }
-  }
-
-  function renderScore() {
-    scoreEls[0].textContent = score.you;
-    scoreEls[1].textContent = score.ai;
-  }
-
-  function resetScore() {
-    score = { you: 0, ai: 0 };
-    saveScore();
-    renderScore();
-  }
-
-  // History model: states[i] is a snapshot; moves[i] transitions states[i] ->
-  // states[i+1]; cursor is the index of the state currently shown.
+  // History model.
   let states = [];
   let moves = [];
   let cursor = 0;
-  let game; // always === states[cursor]
+  let game; // === states[cursor]
 
-  let busy = false;     // AI is thinking (block input)
-  let gameOver = false; // a player has reached their goal
+  let busy = false;     // AI is thinking
+  let gameOver = false;
   let cellNodes = {};
   const wallLayer = [];
   let previewNode = null;
-  let armed = null; // touch: a wall slot awaiting confirmation
+  let armed = null;
+  let wallStrong = []; // per-player "walls left" elements
+  let scoreStrong = []; // per-player score elements (2P only)
+  let cardEls = [];
 
   const isTouch = window.matchMedia('(pointer: coarse)').matches;
-  const DIFFICULTY_VALUES = ['easy', 'medium', 'hard', 'expert'];
+
+  // Persistent win tally (2P only).
+  const SCORE_KEY = 'quoridor.score';
+  let score = loadScore();
+  let currentGameScored = false;
 
   const cellLine = (i) => 2 * i + 1;
   const gapLine = (i) => 2 * i + 2;
+
+  const numPlayers = () => game.numPlayers;
+  const vsAI = () => game.numPlayers === 2;
+  const meta = () => PLAYER_META[game.numPlayers];
 
   // --- Board construction ----------------------------------------------
 
@@ -112,10 +111,45 @@
     boardEl.appendChild(slot);
   }
 
+  // Build the player cards for the current game.
+  function buildInfo() {
+    infoEl.innerHTML = '';
+    wallStrong = [];
+    scoreStrong = [];
+    cardEls = [];
+    const m = meta();
+    for (let i = 0; i < game.players.length; i++) {
+      const card = document.createElement('div');
+      card.className = 'player-card';
+      const dot = document.createElement('span');
+      dot.className = 'dot ' + m[i].color;
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = m[i].label + ' ' + m[i].arrow;
+      const walls = document.createElement('span');
+      walls.className = 'walls';
+      const ws = document.createElement('strong');
+      walls.append('Walls: ', ws);
+      card.append(dot, name, walls);
+      if (vsAI()) {
+        const sc = document.createElement('span');
+        sc.className = 'score';
+        const ss = document.createElement('strong');
+        sc.append('Wins: ', ss);
+        card.append(sc);
+        scoreStrong[i] = ss;
+      }
+      infoEl.appendChild(card);
+      wallStrong[i] = ws;
+      cardEls[i] = card;
+    }
+  }
+
   // --- Rendering --------------------------------------------------------
 
-  function humanCanAct() {
-    return !busy && !gameOver && game.current === 0;
+  // It is a human's turn to act on this device.
+  function humanToMove() {
+    return !busy && !gameOver && (!vsAI() || game.current === 0);
   }
 
   function render() {
@@ -123,27 +157,28 @@
       cellNodes[key].innerHTML = '';
       cellNodes[key].classList.remove('legal');
     }
-    for (let i = 0; i < 2; i++) {
+    const m = meta();
+    for (let i = 0; i < game.players.length; i++) {
       const p = game.players[i];
       const pawn = document.createElement('div');
-      pawn.className = 'pawn p' + i;
+      pawn.className = 'pawn ' + m[i].color;
       cellNodes[p.row + ',' + p.col].appendChild(pawn);
     }
     clearWalls();
     drawWalls(game.hWalls, 'H');
     drawWalls(game.vWalls, 'V');
 
-    wallEls[0].textContent = game.players[0].wallsLeft;
-    wallEls[1].textContent = game.players[1].wallsLeft;
-    cardEls[0].classList.toggle('active', humanCanAct());
-    cardEls[1].classList.toggle('active', !gameOver && game.current === 1);
+    for (let i = 0; i < game.players.length; i++) {
+      if (wallStrong[i]) wallStrong[i].textContent = game.players[i].wallsLeft;
+      if (cardEls[i]) cardEls[i].classList.toggle('active', !gameOver && game.current === i);
+    }
 
-    if (humanCanAct()) {
-      for (const [r, c] of game.getPawnMoves(0)) {
+    if (humanToMove()) {
+      for (const [r, c] of game.getPawnMoves(game.current)) {
         cellNodes[r + ',' + c].classList.add('legal');
       }
     }
-    const canWall = humanCanAct() && game.players[0].wallsLeft > 0;
+    const canWall = humanToMove() && game.players[game.current].wallsLeft > 0;
     boardEl.querySelectorAll('.slot').forEach((s) => s.classList.toggle('enabled', canWall));
   }
 
@@ -192,22 +227,22 @@
   // --- Input handlers ---------------------------------------------------
 
   function onCellClick(r, c) {
-    if (!humanCanAct()) return;
+    if (!humanToMove()) return;
     clearArmed();
-    if (!game.getPawnMoves(0).some(([mr, mc]) => mr === r && mc === c)) return;
+    if (!game.getPawnMoves(game.current).some(([mr, mc]) => mr === r && mc === c)) return;
     applyAndContinue({ type: 'move', row: r, col: c });
   }
 
   function onSlotHover(orient, r, c) {
     if (isTouch) return;
     clearPreview();
-    if (!humanCanAct() || game.players[0].wallsLeft === 0) return;
+    if (!humanToMove() || game.players[game.current].wallsLeft === 0) return;
     const valid = orient === 'H' ? game.canPlaceHWall(r, c) : game.canPlaceVWall(r, c);
     placeWallNode(orient, r, c, true, valid ? 'valid' : 'invalid');
   }
 
   function onSlotClick(orient, r, c) {
-    if (!humanCanAct() || game.players[0].wallsLeft === 0) return;
+    if (!humanToMove() || game.players[game.current].wallsLeft === 0) return;
     const valid = orient === 'H' ? game.canPlaceHWall(r, c) : game.canPlaceVWall(r, c);
 
     if (isTouch) {
@@ -237,7 +272,6 @@
   }
 
   function pushMove(move) {
-    // Drop any redo branch, then append the new state.
     states.length = cursor + 1;
     moves.length = cursor;
     states.push(game.apply(move));
@@ -253,11 +287,10 @@
     updateNav();
     const winner = game.getWinner();
     if (winner !== -1) return endGame(winner, true);
-    aiTurn();
+    if (vsAI() && game.current === 1) aiTurn();
+    else setStatus(turnPrompt());
   }
 
-  // The cell the AI (player 1) occupied on its previous turn, i.e. two plies
-  // back (turns alternate). Used to discourage shuffling back and forth.
   function aiPrevCell() {
     if (cursor < 2) return null;
     const p = states[cursor - 2].players[1];
@@ -270,24 +303,26 @@
     render();
     updateNav();
     setTimeout(() => {
-      // Pass the AI's previous cell so it commits to a route instead of
-      // shuffling, while still being free to backtrack out of a dead end.
       const move = window.QuoridorAI.chooseMove(game, difficultyEl.value, aiPrevCell());
       if (move) pushMove(move);
       busy = false;
       render();
       const winner = game.getWinner();
       if (winner !== -1) return endGame(winner, true);
-      setStatus('Your turn — move your pawn or place a wall.');
+      setStatus(turnPrompt());
       updateNav();
     }, 60);
   }
 
+  function turnPrompt() {
+    if (vsAI()) return 'Your turn — move your pawn or place a wall.';
+    const m = meta()[game.current];
+    return `${m.label} (${m.color}) — your move. Pass the device.`;
+  }
+
   function endGame(winner, live) {
     gameOver = true;
-    // Count the result once per game, and only when it ends through live play
-    // (not via redo/replay navigation).
-    if (live && !currentGameScored) {
+    if (live && vsAI() && !currentGameScored) {
       currentGameScored = true;
       if (winner === 0) score.you++; else score.ai++;
       saveScore();
@@ -295,8 +330,13 @@
     }
     render();
     updateNav();
-    if (winner === 0) setStatus('🎉 You win! Reached the top row.', 'win');
-    else setStatus('The AI wins this time. Try again!', 'lose');
+    if (vsAI()) {
+      if (winner === 0) setStatus('🎉 You win! Reached the top row.', 'win');
+      else setStatus('The AI wins this time. Try again!', 'lose');
+    } else {
+      const m = meta()[winner];
+      setStatus(`🎉 ${m.label} (${m.color}) wins!`, 'win');
+    }
   }
 
   function setStatus(text, cls) {
@@ -306,55 +346,84 @@
 
   // --- Undo / redo ------------------------------------------------------
 
-  // Index of the nearest human-to-move state strictly before `from`, or -1.
+  // 2P: step back/forward a whole turn (human move + AI reply). 4P: one ply.
   function prevHumanState(from) {
     let t = from - 1;
     while (t > 0 && states[t].current !== 0) t--;
     return t >= 0 && t < from && states[t].current === 0 ? t : -1;
   }
 
-  // Index of the next human-to-move state after `from` (or the last state).
   function nextHumanState(from) {
     let t = from + 1;
     while (t < states.length && states[t].current !== 0) t++;
-    if (t >= states.length) return cursor < states.length - 1 ? states.length - 1 : -1;
+    if (t >= states.length) return from < states.length - 1 ? states.length - 1 : -1;
     return t;
+  }
+
+  function undoTarget() {
+    return vsAI() ? prevHumanState(cursor) : (cursor >= 1 ? cursor - 1 : -1);
+  }
+
+  function redoTarget() {
+    return vsAI() ? nextHumanState(cursor) : (cursor < states.length - 1 ? cursor + 1 : -1);
   }
 
   function undo() {
     if (busy) return;
-    const t = prevHumanState(cursor);
+    const t = undoTarget();
     if (t < 0) return;
     setCursor(t);
     gameOver = false;
-    setStatus('Took back a turn — your move.');
     render();
     updateNav();
+    setStatus(vsAI() ? 'Took back a turn — your move.' : turnPrompt());
   }
 
   function redo() {
     if (busy) return;
-    const t = nextHumanState(cursor);
+    const t = redoTarget();
     if (t < 0) return;
     setCursor(t);
     gameOver = false;
     render();
     updateNav();
     const winner = game.getWinner();
-    if (winner !== -1) endGame(winner);
-    else setStatus('Your turn — move your pawn or place a wall.');
+    if (winner !== -1) endGame(winner, false);
+    else setStatus(turnPrompt());
   }
 
   function updateNav() {
-    undoBtn.disabled = busy || prevHumanState(cursor) < 0;
-    redoBtn.disabled = busy || cursor >= states.length - 1;
+    undoBtn.disabled = busy || undoTarget() < 0;
+    redoBtn.disabled = busy || redoTarget() < 0;
     saveBtn.disabled = cursor <= 0;
   }
 
+  // --- Score (2P) -------------------------------------------------------
+
+  function loadScore() {
+    try {
+      const s = JSON.parse(localStorage.getItem(SCORE_KEY));
+      if (s && typeof s.you === 'number' && typeof s.ai === 'number') return s;
+    } catch (e) { /* ignore */ }
+    return { you: 0, ai: 0 };
+  }
+
+  function saveScore() {
+    try { localStorage.setItem(SCORE_KEY, JSON.stringify(score)); } catch (e) { /* ignore */ }
+  }
+
+  function renderScore() {
+    if (scoreStrong[0]) scoreStrong[0].textContent = score.you;
+    if (scoreStrong[1]) scoreStrong[1].textContent = score.ai;
+  }
+
+  function resetScore() {
+    score = { you: 0, ai: 0 };
+    saveScore();
+    renderScore();
+  }
+
   // --- Replay record (save / load) -------------------------------------
-  //
-  // Encoding: a pawn move to (row,col) is "<col-letter a-i><row 1-9>", e.g. e9.
-  // A wall is "<col-letter a-h><row 1-8><h|v>" using its anchor, e.g. e3h.
 
   function encodeMove(m) {
     if (m.type === 'move') return String.fromCharCode(97 + m.col) + (m.row + 1);
@@ -383,6 +452,7 @@
     const tokens = moves.slice(0, cursor).map(encodeMove);
     const text = [
       '# Quoridor Game Record v1',
+      'players: ' + numPlayers(),
       'difficulty: ' + difficultyEl.value,
       'first: ' + firstMoveEl.value,
       'date: ' + new Date().toISOString(),
@@ -408,15 +478,16 @@
     const lines = text.split(/\r?\n/);
     let diff = 'medium';
     let first = 'human';
+    let np = 2;
     let tokens = [];
     for (const ln of lines) {
-      if (ln.startsWith('difficulty:')) diff = ln.slice(11).trim();
+      if (ln.startsWith('players:')) np = parseInt(ln.slice(8).trim(), 10) === 4 ? 4 : 2;
+      else if (ln.startsWith('difficulty:')) diff = ln.slice(11).trim();
       else if (ln.startsWith('first:')) first = ln.slice(6).trim();
       else if (ln.startsWith('moves:')) tokens = ln.slice(6).trim().split(/\s+/).filter(Boolean);
     }
-    // Rebuild and validate against the rules before committing.
-    const init = new window.QuoridorGame();
-    init.current = first === 'ai' ? 1 : 0;
+    const init = new window.QuoridorGame(np);
+    if (np === 2 && first === 'ai') init.current = 1;
     const newStates = [init];
     const newMoves = [];
     let cur = init;
@@ -432,46 +503,57 @@
     }
     states = newStates;
     moves = newMoves;
+    modeEl.value = String(np);
     if (DIFFICULTY_VALUES.includes(diff)) difficultyEl.value = diff;
     if (first === 'ai' || first === 'human') firstMoveEl.value = first;
     busy = false;
     gameOver = false;
-    currentGameScored = true; // loaded games don't affect the win tally
+    currentGameScored = true; // loaded games don't affect the tally
     setCursor(states.length - 1);
+    syncModeUI();
+    buildInfo();
+    renderScore();
     render();
     updateNav();
     const winner = game.getWinner();
-    if (winner !== -1) {
-      endGame(winner);
-    } else if (game.current === 1) {
-      setStatus('Replay loaded — AI to move.');
-      aiTurn();
-    } else {
-      setStatus('Replay loaded (' + newMoves.length + ' moves) — your turn.');
-    }
+    if (winner !== -1) endGame(winner, false);
+    else if (vsAI() && game.current === 1) { setStatus('Replay loaded — AI to move.'); aiTurn(); }
+    else setStatus('Replay loaded (' + newMoves.length + ' moves) — ' + turnPrompt());
   }
 
+  const DIFFICULTY_VALUES = ['easy', 'medium', 'hard', 'expert'];
+
   // --- New game / init --------------------------------------------------
+
+  function syncModeUI() {
+    const four = modeEl.value === '4';
+    difficultyOpt.hidden = four;
+    firstMoveOpt.hidden = four;
+  }
 
   function newGame() {
     clearPreview();
     clearArmed();
-    const init = new window.QuoridorGame();
-    if (firstMoveEl.value === 'ai') init.current = 1;
+    syncModeUI();
+    const np = modeEl.value === '4' ? 4 : 2;
+    const init = new window.QuoridorGame(np);
+    if (np === 2 && firstMoveEl.value === 'ai') init.current = 1;
     states = [init];
     moves = [];
     busy = false;
     gameOver = false;
     currentGameScored = false;
     setCursor(0);
+    buildInfo();
+    renderScore();
     render();
     updateNav();
-    if (game.current === 1) aiTurn();
-    else setStatus('Your turn — move your pawn or place a wall.');
+    if (vsAI() && game.current === 1) aiTurn();
+    else setStatus(turnPrompt());
   }
 
   buildBoard();
-  renderScore();
+  modeEl.addEventListener('change', newGame);
   newGameBtn.addEventListener('click', newGame);
   undoBtn.addEventListener('click', undo);
   redoBtn.addEventListener('click', redo);
@@ -484,7 +566,7 @@
     const reader = new FileReader();
     reader.onload = () => loadReplay(String(reader.result));
     reader.readAsText(file);
-    loadFileEl.value = ''; // allow re-loading the same file
+    loadFileEl.value = '';
   });
   document.addEventListener('keydown', (e) => {
     if (!(e.ctrlKey || e.metaKey)) return;

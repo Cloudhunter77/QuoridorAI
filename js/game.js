@@ -13,7 +13,6 @@
  */
 
 const BOARD_SIZE = 9;
-const WALLS_PER_PLAYER = 10;
 
 const DIRECTIONS = [
   [-1, 0], // up
@@ -22,21 +21,34 @@ const DIRECTIONS = [
   [0, 1],  // right
 ];
 
+// Player start positions and goals. A goal is an edge: reach any cell whose
+// `goalAxis` coordinate equals `goalValue`. 2-player is human (bottom) vs AI
+// (top); 4-player adds left/right pawns racing to the opposite side. Turn order
+// follows array order; 4-player order goes clockwise (bottom, right, top, left).
+const PLAYER_SETUPS = {
+  2: [
+    { row: 8, col: 4, goalAxis: 'row', goalValue: 0, wallsLeft: 10 },
+    { row: 0, col: 4, goalAxis: 'row', goalValue: 8, wallsLeft: 10 },
+  ],
+  4: [
+    { row: 8, col: 4, goalAxis: 'row', goalValue: 0, wallsLeft: 5 }, // bottom -> top
+    { row: 4, col: 8, goalAxis: 'col', goalValue: 0, wallsLeft: 5 }, // right  -> left
+    { row: 0, col: 4, goalAxis: 'row', goalValue: 8, wallsLeft: 5 }, // top    -> bottom
+    { row: 4, col: 0, goalAxis: 'col', goalValue: 8, wallsLeft: 5 }, // left   -> right
+  ],
+};
+
 function inBounds(r, c) {
   return r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
 }
 
 class QuoridorGame {
-  constructor() {
+  constructor(numPlayers) {
+    this.numPlayers = numPlayers || 2;
     // 8x8 boolean matrices of wall anchors.
     this.hWalls = QuoridorGame._emptyWallGrid();
     this.vWalls = QuoridorGame._emptyWallGrid();
-
-    this.players = [
-      { row: 8, col: 4, goalRow: 0, wallsLeft: WALLS_PER_PLAYER }, // human
-      { row: 0, col: 4, goalRow: 8, wallsLeft: WALLS_PER_PLAYER }, // AI
-    ];
-
+    this.players = PLAYER_SETUPS[this.numPlayers].map((p) => ({ ...p }));
     this.current = 0; // index of player to move
   }
 
@@ -50,6 +62,7 @@ class QuoridorGame {
 
   clone() {
     const g = Object.create(QuoridorGame.prototype);
+    g.numPlayers = this.numPlayers;
     g.hWalls = this.hWalls.map((row) => row.slice());
     g.vWalls = this.vWalls.map((row) => row.slice());
     g.players = this.players.map((p) => ({ ...p }));
@@ -91,10 +104,17 @@ class QuoridorGame {
 
   // --- Pawn movement ----------------------------------------------------
 
-  // Legal pawn destinations for a player, including jumps over the opponent.
+  // Is a cell occupied by some pawn other than player `idx`?
+  _occupied(r, c, idx) {
+    for (let i = 0; i < this.players.length; i++) {
+      if (i !== idx && this.players[i].row === r && this.players[i].col === c) return true;
+    }
+    return false;
+  }
+
+  // Legal pawn destinations for a player, including jumps over an adjacent pawn.
   getPawnMoves(idx) {
     const me = this.players[idx];
-    const opp = this.players[1 - idx];
     const moves = [];
 
     for (const [dr, dc] of DIRECTIONS) {
@@ -103,19 +123,19 @@ class QuoridorGame {
       if (!inBounds(nr, nc)) continue;
       if (this.isBlocked(me.row, me.col, dr, dc)) continue;
 
-      if (nr === opp.row && nc === opp.col) {
-        // Opponent is adjacent: attempt to jump.
+      if (this._occupied(nr, nc, idx)) {
+        // Another pawn is adjacent: attempt to jump over it.
         const jr = nr + dr;
         const jc = nc + dc;
-        if (inBounds(jr, jc) && !this.isBlocked(nr, nc, dr, dc)) {
+        if (inBounds(jr, jc) && !this.isBlocked(nr, nc, dr, dc) && !this._occupied(jr, jc, idx)) {
           moves.push([jr, jc]); // straight jump
         } else {
-          // Blocked behind opponent -> diagonal jumps.
+          // Blocked behind the pawn (wall, edge, or another pawn) -> diagonal.
           const perps = dr === 0 ? [[-1, 0], [1, 0]] : [[0, -1], [0, 1]];
           for (const [pr, pc] of perps) {
             const dr2 = nr + pr;
             const dc2 = nc + pc;
-            if (inBounds(dr2, dc2) && !this.isBlocked(nr, nc, pr, pc)) {
+            if (inBounds(dr2, dc2) && !this.isBlocked(nr, nc, pr, pc) && !this._occupied(dr2, dc2, idx)) {
               moves.push([dr2, dc2]);
             }
           }
@@ -145,11 +165,14 @@ class QuoridorGame {
     return this._pathsExistWith('v', r, c);
   }
 
-  // Temporarily place a wall and verify both players can still reach goal.
+  // Temporarily place a wall and verify EVERY player can still reach its goal.
   _pathsExistWith(orientation, r, c) {
     const grid = orientation === 'h' ? this.hWalls : this.vWalls;
     grid[r][c] = true;
-    const ok = this.hasPathToGoal(0) && this.hasPathToGoal(1);
+    let ok = true;
+    for (let i = 0; i < this.players.length && ok; i++) {
+      if (!this.hasPathToGoal(i)) ok = false;
+    }
     grid[r][c] = false;
     return ok;
   }
@@ -162,7 +185,7 @@ class QuoridorGame {
 
   shortestPath(idx) {
     const start = this.players[idx];
-    const goalRow = start.goalRow;
+    const onGoal = (r, c) => (start.goalAxis === 'row' ? r === start.goalValue : c === start.goalValue);
     const visited = Array.from({ length: BOARD_SIZE }, () => new Array(BOARD_SIZE).fill(false));
     const parent = {};
     const queue = [[start.row, start.col]];
@@ -171,7 +194,7 @@ class QuoridorGame {
     let head = 0;
     while (head < queue.length) {
       const [r, c] = queue[head++];
-      if (r === goalRow) {
+      if (onGoal(r, c)) {
         // reconstruct path
         const path = [];
         let key = r + ',' + c;
@@ -200,8 +223,10 @@ class QuoridorGame {
   // --- Game flow --------------------------------------------------------
 
   getWinner() {
-    if (this.players[0].row === this.players[0].goalRow) return 0;
-    if (this.players[1].row === this.players[1].goalRow) return 1;
+    for (let i = 0; i < this.players.length; i++) {
+      const p = this.players[i];
+      if (p.goalAxis === 'row' ? p.row === p.goalValue : p.col === p.goalValue) return i;
+    }
     return -1;
   }
 
@@ -219,11 +244,11 @@ class QuoridorGame {
       ng.vWalls[move.r][move.c] = true;
       p.wallsLeft--;
     }
-    ng.current = 1 - ng.current;
+    ng.current = (ng.current + 1) % ng.players.length;
     return ng;
   }
 }
 
 // Expose globally (classic script, no modules so it runs from file://).
 window.QuoridorGame = QuoridorGame;
-window.QUORIDOR = { BOARD_SIZE, WALLS_PER_PLAYER, DIRECTIONS, inBounds };
+window.QUORIDOR = { BOARD_SIZE, DIRECTIONS, inBounds };

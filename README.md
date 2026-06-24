@@ -28,8 +28,18 @@ python3 -m http.server 8000
 - When the two pawns are face to face you may **jump** over the opponent
   (straight ahead, or diagonally if a wall is behind them).
 
-You can pick the difficulty and whether **you or the AI moves first** before
-starting a new game (you're always the blue pawn at the bottom either way).
+## Modes
+
+- **2P vs AI** — you (blue, bottom) versus the AI (red, top). Pick difficulty
+  and who moves first.
+- **4P pass & play** — four humans share one device. Pawns start on all four
+  sides (blue↑, green←, red↓, yellow→) and each races to the **opposite** side;
+  5 walls each. Turns go round the table; the card with the yellow outline shows
+  whose turn it is, and the status line tells you to pass the device. First pawn
+  to reach its opposite side wins. (No AI in this mode.)
+
+In 2P you can also pick the difficulty and whether **you or the AI moves first**
+before starting a new game (you're always the blue pawn at the bottom).
 
 ## Score
 

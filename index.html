@@ -12,6 +12,13 @@
 
     <section class="controls">
       <label>
+        Mode
+        <select id="mode">
+          <option value="2" selected>2P vs AI</option>
+          <option value="4">4P pass &amp; play</option>
+        </select>
+      </label>
+      <label id="difficulty-opt">
         Difficulty
         <select id="difficulty">
           <option value="easy">Easy</option>
@@ -20,7 +27,7 @@
           <option value="expert">Expert</option>
         </select>
       </label>
-      <label>
+      <label id="first-move-opt">
         First move
         <select id="first-move">
           <option value="human" selected>You</option>
@@ -36,20 +43,7 @@
       <div id="board" class="board" aria-label="Quoridor board"></div>
     </div>
 
-    <section class="info">
-      <div class="player-card you">
-        <span class="dot"></span>
-        <span class="name">You</span>
-        <span class="walls">Walls: <strong id="walls-0">10</strong></span>
-        <span class="score">Wins: <strong id="score-0">0</strong></span>
-      </div>
-      <div class="player-card ai">
-        <span class="dot"></span>
-        <span class="name">AI</span>
-        <span class="walls">Walls: <strong id="walls-1">10</strong></span>
-        <span class="score">Wins: <strong id="score-1">0</strong></span>
-      </div>
-    </section>
+    <section class="info" id="info"></section>
 
     <section class="controls actions">
       <button id="undo" type="button">Undo</button>
@@ -74,7 +68,7 @@
       </ul>
     </details>
 
-    <footer class="version">v1.7.0</footer>
+    <footer class="version">v1.8.0</footer>
   </main>
 
   <script src="js/game.js"></script>
